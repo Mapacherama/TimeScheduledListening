@@ -30,7 +30,7 @@ def play_spotify_playlist(playlist_uri):
 playlist_uri = "spotify:playlist:04nZz4vvtnc24gDhQdg8Vd"
 
 # Schedule the task
-schedule.every().day.at("14:19").do(play_spotify_playlist, playlist_uri=playlist_uri)
+schedule.every().day.at("15:10").do(play_spotify_playlist, playlist_uri=playlist_uri)
 
 # Run the scheduler
 while True:
