@@ -2,18 +2,23 @@ from fastapi import FastAPI, Request, HTTPException, Query
 from spotipy.oauth2 import SpotifyOAuth
 import spotipy
 import os
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import pytz
 
-from fastapi_apscheduler.scheduler import scheduler
-from fastapi_apscheduler.utils import get_logger
-from fastapi_apscheduler.routers import get_jobs_router
-
-logger = get_logger(__name__)
-
+# Initialize the app
 app = FastAPI()
-app.include_router(get_jobs_router(), prefix="/scheduler", tags=["scheduler"])
 
+# Set timezone
+timezone = pytz.timezone('Europe/Amsterdam')
+
+# Initialize APScheduler
+scheduler = BackgroundScheduler(timezone=timezone)
+
+# Setup Spotify OAuth
 sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
                         client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
                         redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
@@ -21,7 +26,6 @@ sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
 
 token_info = None
 sp = None
-timezone = pytz.timezone('Europe/Amsterdam')
 
 @app.get("/login")
 def login():
@@ -47,10 +51,13 @@ def play_playlist(playlist_uri):
     if sp:
         sp.start_playback(context_uri=playlist_uri)
     else:
-        logger.info("Spotify client is not initialized")
+        print("Spotify client is not initialized")
 
 @app.get("/schedule-playlist")
 def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0-9]{2}):([0-9]{2})$")):
+    """
+    Schedule a playlist to start playing at a specified time (HH:MM format).
+    """
     try:
         now = datetime.now(timezone)
         play_time_obj = datetime.strptime(play_time, "%H:%M").replace(
@@ -60,7 +67,8 @@ def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0
         if play_time_obj < now:
             play_time_obj = play_time_obj.replace(day=now.day + 1)
         
-        scheduler.add_job(play_playlist, 'date', run_date=play_time_obj, args=[playlist_uri])
+        trigger = DateTrigger(run_date=play_time_obj)
+        scheduler.add_job(play_playlist, trigger, args=[playlist_uri])
         
         return {
             "message": f"Playlist {playlist_uri} scheduled to play at {play_time_obj.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -69,10 +77,12 @@ def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+# Ensure the scheduler shuts down properly on application exit
 @app.on_event("shutdown")
-async def shutdown_event():
-    await scheduler.shutdown()
+def shutdown_event():
+    scheduler.shutdown()
 
+# Start the scheduler when the app starts
 @app.on_event("startup")
-async def startup_event():
-    await scheduler.start()
+def startup_event():
+    scheduler.start()
