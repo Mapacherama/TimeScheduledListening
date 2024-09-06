@@ -19,7 +19,6 @@ sp = None
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# Define the time zone
 timezone = pytz.timezone('Europe/Amsterdam')  # Change this to your desired time zone
 
 @app.get("/login")
