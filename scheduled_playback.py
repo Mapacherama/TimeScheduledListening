@@ -2,11 +2,17 @@ from fastapi import FastAPI, Request, HTTPException, Query
 from spotipy.oauth2 import SpotifyOAuth
 import spotipy
 import os
-from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
-import pytz  # for timezone handling
+import pytz
+
+from fastapi_apscheduler.scheduler import scheduler
+from fastapi_apscheduler.utils import get_logger
+from fastapi_apscheduler.routers import get_jobs_router
+
+logger = get_logger(__name__)
 
 app = FastAPI()
+app.include_router(get_jobs_router(), prefix="/scheduler", tags=["scheduler"])
 
 sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
                         client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
@@ -15,11 +21,7 @@ sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
 
 token_info = None
 sp = None
-
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-timezone = pytz.timezone('Europe/Amsterdam')  # Change this to your desired time zone
+timezone = pytz.timezone('Europe/Amsterdam')
 
 @app.get("/login")
 def login():
@@ -35,9 +37,7 @@ def callback(request: Request):
         raise HTTPException(status_code=400, detail="Authorization failed or denied.")
     
     token_info = sp_oauth.get_access_token(code)
-    
     sp = spotipy.Spotify(auth=token_info['access_token'])
-    
     user_info = sp.current_user()
     
     return {"user_info": user_info}
@@ -47,14 +47,10 @@ def play_playlist(playlist_uri):
     if sp:
         sp.start_playback(context_uri=playlist_uri)
     else:
-        print("Spotify client is not initialized")
-
+        logger.info("Spotify client is not initialized")
 
 @app.get("/schedule-playlist")
 def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0-9]{2}):([0-9]{2})$")):
-    """
-    Schedule a playlist to start playing at a specified time (HH:MM format).
-    """
     try:
         now = datetime.now(timezone)
         play_time_obj = datetime.strptime(play_time, "%H:%M").replace(
@@ -74,5 +70,9 @@ def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.on_event("shutdown")
-def shutdown_event():
-    scheduler.shutdown()
+async def shutdown_event():
+    await scheduler.shutdown()
+
+@app.on_event("startup")
+async def startup_event():
+    await scheduler.start()
