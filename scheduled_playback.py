@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request, HTTPException, Query
 from spotipy.oauth2 import SpotifyOAuth
 import spotipy
 import os
+import json
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
@@ -20,18 +21,35 @@ sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
 
 # In-memory token storage
 token_store = {}
+TOKEN_FILE_PATH = "token_info.json"  # File path to store token info
 
 def save_token_info(token_info):
     token_store['token_info'] = token_info
+    with open(TOKEN_FILE_PATH, 'w') as f:
+        json.dump(token_info, f)  # Save token to a file
 
 def load_token_info():
-    return token_store.get('token_info')
+    if 'token_info' in token_store:
+        return token_store['token_info']
+    
+    # Try to load from the file if token info isn't in memory
+    if os.path.exists(TOKEN_FILE_PATH):
+        with open(TOKEN_FILE_PATH, 'r') as f:
+            token_info = json.load(f)
+            token_store['token_info'] = token_info  # Cache it in memory
+            return token_info
+    return None
 
 token_info = None
 sp = None
 
 @app.get("/login")
 def login():
+    token_info = load_token_info()  # Check if token is already stored
+    
+    if token_info:
+        return {"message": "Already authenticated", "token_info": token_info}
+    
     auth_url = sp_oauth.get_authorize_url()
     return {"auth_url": auth_url}
 
@@ -44,7 +62,7 @@ def callback(request: Request):
         raise HTTPException(status_code=400, detail="Authorization failed or denied.")
     
     token_info = sp_oauth.get_access_token(code)
-    save_token_info(token_info)  # Save token info in memory
+    save_token_info(token_info)  # Save token info in file
     sp = spotipy.Spotify(auth=token_info['access_token'])
     user_info = sp.current_user()
     
@@ -52,7 +70,7 @@ def callback(request: Request):
 
 def refresh_token_if_needed():
     global sp
-    token_info = load_token_info()  # Load token info from memory
+    token_info = load_token_info()  # Load token info from memory or file
     
     if token_info is None:
         raise Exception("Token info is not initialized. Please authenticate first.")
