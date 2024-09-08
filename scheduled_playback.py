@@ -4,7 +4,7 @@ import spotipy
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Initialize the app
 app = FastAPI()
@@ -100,6 +100,12 @@ def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+def periodic_token_refresh():
+    """
+    This function refreshes the token periodically every 50 minutes to ensure the token is always valid.
+    """
+    refresh_token_if_needed()
+
 # Ensure the scheduler shuts down properly on application exit
 @app.on_event("shutdown")
 def shutdown_event():
@@ -109,3 +115,6 @@ def shutdown_event():
 @app.on_event("startup")
 def startup_event():
     scheduler.start()
+
+    # Refresh token every 50 minutes to keep it valid
+    scheduler.add_job(periodic_token_refresh, 'interval', minutes=50)
