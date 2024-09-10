@@ -1,9 +1,8 @@
-import tensorflow as tf
-from tensorflow.keras import layers, models, optimizers
 import numpy as np
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os
+from pycaret.classification import setup, compare_models, create_model, tune_model, evaluate_model
 
 # Setup Spotify OAuth
 sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
@@ -23,7 +22,7 @@ def get_audio_features(track_ids):
     X = []
     for feature in features:
         if feature:
-            X.append([feature['tempo'], feature['energy'], feature['danceability'], feature['valence']])
+            X.append([feature['tempo'], feature['energy'], feature['valence'], feature['loudness']])
     return np.array(X)
 
 # Example: Collect heavy metal tracks
@@ -34,13 +33,23 @@ for artist in ["Slayer", "Pantera", "Iron Maiden", "After the Burial", "100 Demo
 X_train = get_audio_features(track_ids)
 y_train = np.ones(len(X_train))  # Label all heavy metal tracks as workout (1)
 
-# Define a simple neural network model in TensorFlow
-model = models.Sequential()
-model.add(layers.Dense(32, activation='relu', input_shape=(4,)))
-model.add(layers.Dense(1, activation='sigmoid'))
+# Convert to a pandas DataFrame
+import pandas as pd
+data = pd.DataFrame(X_train, columns=["tempo", "energy", "danceability", "valence"])
+data['label'] = y_train
 
-# Compile the model
-model.compile(optimizer=optimizers.Adam(lr=0.001), loss='binary_crossentropy')
+# Use PyCaret for binary classification
+# Initialize PyCaret classification setup
+clf = setup(data=data, target='label', silent=True, verbose=False)
 
-# Train the model
-model.fit(X_train, y_train, epochs=10)
+# Compare models and choose the best one
+best_model = compare_models()
+
+# Train the best model
+trained_model = create_model(best_model)
+
+# Optionally, tune the model
+tuned_model = tune_model(trained_model)
+
+# Evaluate the model
+evaluate_model(tuned_model)

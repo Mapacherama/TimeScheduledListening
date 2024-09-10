@@ -6,6 +6,11 @@ import json
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
+import asyncio
+import time
+import requests
+from requests.exceptions import ConnectionError, Timeout
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Initialize the app
 app = FastAPI()
@@ -68,6 +73,7 @@ def callback(request: Request):
     
     return {"user_info": user_info}
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def refresh_token_if_needed():
     global sp
     token_info = load_token_info()  # Load token info from memory or file
@@ -75,10 +81,20 @@ def refresh_token_if_needed():
     if token_info is None:
         raise Exception("Token info is not initialized. Please authenticate first.")
     
+    # Refresh the token if it has expired
     if sp_oauth.is_token_expired(token_info):
-        token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
-        save_token_info(token_info)  # Save the refreshed token
-        sp = spotipy.Spotify(auth=token_info['access_token'])
+        try:
+            token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
+            save_token_info(token_info)  # Save the refreshed token
+        except ConnectionError as e:
+            print(f"Connection error: {e}")
+            raise  # Retry logic will handle retries on ConnectionError
+        except Timeout as e:
+            print(f"Request timed out: {e}")
+            raise  # Retry on Timeout
+
+    # Re-initialize Spotify client with the new access token
+    sp = spotipy.Spotify(auth=token_info['access_token'])
 
 def play_playlist(playlist_uri):
     global sp
@@ -86,11 +102,16 @@ def play_playlist(playlist_uri):
         # Refresh token if needed
         refresh_token_if_needed()
 
-        if sp:
-            sp.start_playback(context_uri=playlist_uri)
-            print(f"Started playback for {playlist_uri}")
-        else:
-            print("Spotify client is not initialized")
+        if not sp:
+            raise Exception("Spotify client is not initialized")
+        
+        # Proceed with playback
+        sp.start_playback(context_uri=playlist_uri)
+        print(f"Started playback for {playlist_uri}")
+
+    except asyncio.CancelledError:
+        print("Task was cancelled during shutdown.")
+        # Do not re-raise the exception, allow graceful shutdown
     except Exception as e:
         print(f"Error in play_playlist: {e}")
 
@@ -120,19 +141,30 @@ def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0
 
 def periodic_token_refresh():
     """
-    This function refreshes the token periodically every 50 minutes to ensure the token is always valid.
+    This function refreshes the token periodically every 45 minutes to ensure the token is always valid.
     """
     refresh_token_if_needed()
 
 # Ensure the scheduler shuts down properly on application exit
 @app.on_event("shutdown")
-def shutdown_event():
-    scheduler.shutdown()
+async def shutdown_event():
+    # Ensure all tasks are canceled properly
+    print("Shutting down scheduler...")
+    scheduler.shutdown(wait=False)  # Prevent waiting for jobs to finish
+
+    # Cleanly cancel any remaining tasks, ignore already cancelled ones
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    print("Cancelling all asyncio tasks...")
+    for task in tasks:
+        if not task.cancelled():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    print("Shutdown complete.")
 
 # Start the scheduler when the app starts
 @app.on_event("startup")
 def startup_event():
     scheduler.start()
 
-    # Refresh token every 50 minutes to keep it valid
-    scheduler.add_job(periodic_token_refresh, 'interval', minutes=50)
+    # Refresh token every 45 minutes to keep it valid
+    scheduler.add_job(periodic_token_refresh, 'interval', minutes=45)
