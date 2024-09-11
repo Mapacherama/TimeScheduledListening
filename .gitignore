@@ -164,3 +164,5 @@ cython_debug/
 .history
 
 token_info.json
+token_info.json
+*.json
