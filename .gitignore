@@ -162,3 +162,8 @@ cython_debug/
 #.idea/
 
 .history
+
+token_info.json
+token_info.json
+token_info.json
+*.json
