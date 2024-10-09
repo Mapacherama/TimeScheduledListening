@@ -70,7 +70,7 @@ def callback(request: Request):
     user_info = sp.current_user()
     return {"user_info": user_info}
 
-def refresh_token_if_needed(retry_count=3, delay=5):
+def refresh_token_if_needed(retry_count=5, delay=5):
     global sp
     token_info = load_token_info()
     if token_info is None:
@@ -83,7 +83,7 @@ def refresh_token_if_needed(retry_count=3, delay=5):
                 sp = spotipy.Spotify(auth=token_info['access_token'])
                 logging.info("Token refreshed successfully.")
                 break
-            except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError) as e:
+            except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.HTTPError) as e:
                 logging.error(f"Failed to refresh token: {str(e)}")
                 if attempt < retry_count - 1:
                     time.sleep(delay * (2 ** attempt))
@@ -98,12 +98,17 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
     refresh_token_if_needed()
     if not sp:
         raise Exception("Spotify client is not initialized")
+
     for attempt in range(retry_count):
         try:
-            sp.start_playback(context_uri=playlist_uri)
+            if playlist_uri.startswith("spotify:playlist:") or playlist_uri.startswith("spotify:album:") or playlist_uri.startswith("spotify:artist:"):
+                sp.start_playback(context_uri=playlist_uri)
+            else:
+                sp.start_playback(uris=[playlist_uri])
+
             logging.info(f"Started playback for {playlist_uri}")
             break
-        except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError) as e:
+        except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError, spotipy.exceptions.SpotifyException) as e:
             logging.error(f"Failed to start playback: {str(e)}")
             if attempt < retry_count - 1:
                 time.sleep(delay * (2 ** attempt))
