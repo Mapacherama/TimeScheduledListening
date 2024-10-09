@@ -39,6 +39,14 @@ def load_token_info():
             return token_info
     return None
 
+def initialize_spotify_client():
+    global sp
+    token_info = load_token_info()
+    if token_info and not sp_oauth.is_token_expired(token_info):
+        sp = spotipy.Spotify(auth=token_info['access_token'])
+    else:
+        sp = None
+
 token_info = None
 sp = None
 
@@ -82,6 +90,8 @@ def refresh_token_if_needed(retry_count=3, delay=5):
                 else:
                     logging.error("Max retry attempts reached. Token refresh failed.")
                     raise
+    else:
+        sp = spotipy.Spotify(auth=token_info['access_token'])
 
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
@@ -129,5 +139,6 @@ async def shutdown_event():
 
 @app.on_event("startup")
 def startup_event():
+    initialize_spotify_client()
     scheduler.start()
     scheduler.add_job(periodic_token_refresh, 'interval', minutes=45)
