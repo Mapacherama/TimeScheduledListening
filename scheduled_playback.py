@@ -5,8 +5,12 @@ import os
 import json
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
+import time
+import logging
+from requests.exceptions import ConnectionError
+import urllib3
 
 app = FastAPI()
 
@@ -58,15 +62,30 @@ def callback(request: Request):
     user_info = sp.current_user()
     return {"user_info": user_info}
 
-def refresh_token_if_needed():
+def refresh_token_if_needed(retry_count=3, delay=5):
     global sp
     token_info = load_token_info()
     if token_info is None:
         raise Exception("Token info is not initialized. Please authenticate first.")
+    
+    # Check if the token is expired
     if sp_oauth.is_token_expired(token_info):
-        token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
-        save_token_info(token_info)
-    sp = spotipy.Spotify(auth=token_info['access_token'])
+        for attempt in range(retry_count):
+            try:
+                # Try to refresh the token
+                token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
+                save_token_info(token_info)
+                sp = spotipy.Spotify(auth=token_info['access_token'])
+                logging.info("Token refreshed successfully.")
+                break  # Exit the retry loop if successful
+            except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError) as e:
+                logging.error(f"Failed to refresh token: {str(e)}")
+                if attempt < retry_count - 1:
+                    # Wait before retrying
+                    time.sleep(delay * (2 ** attempt))  # Exponential backoff
+                else:
+                    logging.error("Max retry attempts reached. Token refresh failed.")
+                    raise
 
 def play_playlist(playlist_uri):
     global sp
