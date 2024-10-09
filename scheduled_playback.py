@@ -67,33 +67,39 @@ def refresh_token_if_needed(retry_count=3, delay=5):
     token_info = load_token_info()
     if token_info is None:
         raise Exception("Token info is not initialized. Please authenticate first.")
-    
-    # Check if the token is expired
     if sp_oauth.is_token_expired(token_info):
         for attempt in range(retry_count):
             try:
-                # Try to refresh the token
                 token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
                 save_token_info(token_info)
                 sp = spotipy.Spotify(auth=token_info['access_token'])
                 logging.info("Token refreshed successfully.")
-                break  # Exit the retry loop if successful
+                break
             except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError) as e:
                 logging.error(f"Failed to refresh token: {str(e)}")
                 if attempt < retry_count - 1:
-                    # Wait before retrying
-                    time.sleep(delay * (2 ** attempt))  # Exponential backoff
+                    time.sleep(delay * (2 ** attempt))
                 else:
                     logging.error("Max retry attempts reached. Token refresh failed.")
                     raise
 
-def play_playlist(playlist_uri):
+def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
     refresh_token_if_needed()
     if not sp:
         raise Exception("Spotify client is not initialized")
-    sp.start_playback(context_uri=playlist_uri)
-    print(f"Started playback for {playlist_uri}")
+    for attempt in range(retry_count):
+        try:
+            sp.start_playback(context_uri=playlist_uri)
+            logging.info(f"Started playback for {playlist_uri}")
+            break
+        except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError) as e:
+            logging.error(f"Failed to start playback: {str(e)}")
+            if attempt < retry_count - 1:
+                time.sleep(delay * (2 ** attempt))
+            else:
+                logging.error("Max retry attempts reached. Playback failed.")
+                raise
 
 @app.get("/schedule-playlist")
 def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0-9]{2}):([0-9]{2})$")):
