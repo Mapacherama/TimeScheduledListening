@@ -5,8 +5,12 @@ import os
 import json
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
+import time
+import logging
+from requests.exceptions import ConnectionError
+import urllib3
 
 app = FastAPI()
 
@@ -35,6 +39,14 @@ def load_token_info():
             return token_info
     return None
 
+def initialize_spotify_client():
+    global sp
+    token_info = load_token_info()
+    if token_info and not sp_oauth.is_token_expired(token_info):
+        sp = spotipy.Spotify(auth=token_info['access_token'])
+    else:
+        sp = None
+
 token_info = None
 sp = None
 
@@ -58,23 +70,51 @@ def callback(request: Request):
     user_info = sp.current_user()
     return {"user_info": user_info}
 
-def refresh_token_if_needed():
+def refresh_token_if_needed(retry_count=5, delay=5):
     global sp
     token_info = load_token_info()
     if token_info is None:
         raise Exception("Token info is not initialized. Please authenticate first.")
     if sp_oauth.is_token_expired(token_info):
-        token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
-        save_token_info(token_info)
-    sp = spotipy.Spotify(auth=token_info['access_token'])
+        for attempt in range(retry_count):
+            try:
+                token_info = sp_oauth.refresh_access_token(token_info['refresh_token'])
+                save_token_info(token_info)
+                sp = spotipy.Spotify(auth=token_info['access_token'])
+                logging.info("Token refreshed successfully.")
+                break
+            except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.HTTPError) as e:
+                logging.error(f"Failed to refresh token: {str(e)}")
+                if attempt < retry_count - 1:
+                    time.sleep(delay * (2 ** attempt))
+                else:
+                    logging.error("Max retry attempts reached. Token refresh failed.")
+                    raise
+    else:
+        sp = spotipy.Spotify(auth=token_info['access_token'])
 
-def play_playlist(playlist_uri):
+def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
     refresh_token_if_needed()
     if not sp:
         raise Exception("Spotify client is not initialized")
-    sp.start_playback(context_uri=playlist_uri)
-    print(f"Started playback for {playlist_uri}")
+
+    for attempt in range(retry_count):
+        try:
+            if playlist_uri.startswith("spotify:playlist:") or playlist_uri.startswith("spotify:album:") or playlist_uri.startswith("spotify:artist:"):
+                sp.start_playback(context_uri=playlist_uri)
+            else:
+                sp.start_playback(uris=[playlist_uri])
+
+            logging.info(f"Started playback for {playlist_uri}")
+            break
+        except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError, spotipy.exceptions.SpotifyException) as e:
+            logging.error(f"Failed to start playback: {str(e)}")
+            if attempt < retry_count - 1:
+                time.sleep(delay * (2 ** attempt))
+            else:
+                logging.error("Max retry attempts reached. Playback failed.")
+                raise
 
 @app.get("/schedule-playlist")
 def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0-9]{2}):([0-9]{2})$")):
@@ -90,6 +130,30 @@ def schedule_playlist(playlist_uri: str, play_time: str = Query(..., regex="^([0
         "message": f"Playlist {playlist_uri} scheduled to play at {play_time_obj.strftime('%Y-%m-%d %H:%M:%S')}"
     }
 
+@app.get("/search-podcast")
+def search_podcast(query: str):
+    refresh_token_if_needed()
+    if not sp:
+        raise HTTPException(status_code=500, detail="Spotify client is not initialized")
+
+    try:
+        search_results = sp.search(q=query, type="show", limit=5)
+        podcasts = search_results.get('shows', {}).get('items', [])
+        if not podcasts:
+            return {"message": "No podcasts found for the query."}
+
+        podcast_list = [{
+            "name": podcast['name'],
+            "description": podcast['description'],
+            "url": podcast['external_urls']['spotify']
+        } for podcast in podcasts]
+
+        return {"podcasts": podcast_list}
+
+    except spotipy.exceptions.SpotifyException as e:
+        logging.error(f"Spotify API error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Spotify API error")
+
 def periodic_token_refresh():
     refresh_token_if_needed()
 
@@ -104,5 +168,6 @@ async def shutdown_event():
 
 @app.on_event("startup")
 def startup_event():
+    initialize_spotify_client()
     scheduler.start()
     scheduler.add_job(periodic_token_refresh, 'interval', minutes=45)
