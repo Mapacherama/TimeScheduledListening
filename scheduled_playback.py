@@ -12,14 +12,17 @@ import logging
 from requests.exceptions import ConnectionError
 import urllib3
 
-app = FastAPI()
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
+app = FastAPI()
 scheduler = BackgroundScheduler()
 
-sp_oauth = SpotifyOAuth(client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-                        client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
-                        redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
-                        scope="user-modify-playback-state")
+sp_oauth = SpotifyOAuth(
+    client_id=os.getenv("SPOTIPY_CLIENT_ID"),
+    client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
+    redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
+    scope="user-modify-playback-state"
+)
 
 token_store = {}
 TOKEN_FILE_PATH = "token_info.json"
@@ -28,15 +31,20 @@ def save_token_info(token_info):
     token_store['token_info'] = token_info
     with open(TOKEN_FILE_PATH, 'w') as f:
         json.dump(token_info, f)
+    logging.info("Token information saved successfully.")
 
 def load_token_info():
     if 'token_info' in token_store:
         return token_store['token_info']
     if os.path.exists(TOKEN_FILE_PATH):
-        with open(TOKEN_FILE_PATH, 'r') as f:
-            token_info = json.load(f)
-            token_store['token_info'] = token_info
-            return token_info
+        try:
+            with open(TOKEN_FILE_PATH, 'r') as f:
+                token_info = json.load(f)
+                token_store['token_info'] = token_info
+                return token_info
+        except json.JSONDecodeError:
+            logging.error("Invalid token file format. Re-authentication is required.")
+            return None
     return None
 
 def initialize_spotify_client():
@@ -44,30 +52,39 @@ def initialize_spotify_client():
     token_info = load_token_info()
     if token_info and not sp_oauth.is_token_expired(token_info):
         sp = spotipy.Spotify(auth=token_info['access_token'])
+        logging.info("Spotify client initialized successfully.")
     else:
         sp = None
 
-token_info = None
-sp = None
-
 @app.get("/login")
 def login():
+    logging.info("Login endpoint accessed.")
     token_info = load_token_info()
     if token_info:
+        logging.info("Token information found. User is already authenticated.")
         return {"message": "Already authenticated", "token_info": token_info}
+    
     auth_url = sp_oauth.get_authorize_url()
+    logging.info(f"Auth URL generated: {auth_url}")
     return {"auth_url": auth_url}
 
 @app.get("/callback")
 def callback(request: Request):
+    logging.info("Callback endpoint accessed.")
     global sp
     code = request.query_params.get('code')
     if not code:
+        logging.error("Authorization failed: No code received.")
         raise HTTPException(status_code=400, detail="Authorization failed or denied.")
+    
+    logging.info(f"Authorization code received: {code}")
     token_info = sp_oauth.get_access_token(code)
     save_token_info(token_info)
+    logging.info("Token information saved.")
     sp = spotipy.Spotify(auth=token_info['access_token'])
+    
     user_info = sp.current_user()
+    logging.info(f"User authenticated: {user_info}")
     return {"user_info": user_info}
 
 def refresh_token_if_needed(retry_count=5, delay=5):
@@ -83,7 +100,9 @@ def refresh_token_if_needed(retry_count=5, delay=5):
                 sp = spotipy.Spotify(auth=token_info['access_token'])
                 logging.info("Token refreshed successfully.")
                 break
-            except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError, urllib3.exceptions.NewConnectionError, urllib3.exceptions.HTTPError) as e:
+            except (ConnectionError, urllib3.exceptions.ProtocolError, 
+                    urllib3.exceptions.MaxRetryError, urllib3.exceptions.NewConnectionError, 
+                    urllib3.exceptions.HTTPError) as e:
                 logging.error(f"Failed to refresh token: {str(e)}")
                 if attempt < retry_count - 1:
                     time.sleep(delay * (2 ** attempt))
@@ -101,14 +120,15 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
 
     for attempt in range(retry_count):
         try:
-            if playlist_uri.startswith("spotify:playlist:") or playlist_uri.startswith("spotify:album:") or playlist_uri.startswith("spotify:artist:"):
+            if playlist_uri.startswith(("spotify:playlist:", "spotify:album:", "spotify:artist:")):
                 sp.start_playback(context_uri=playlist_uri)
             else:
                 sp.start_playback(uris=[playlist_uri])
 
             logging.info(f"Started playback for {playlist_uri}")
             break
-        except (ConnectionError, urllib3.exceptions.ProtocolError, urllib3.exceptions.MaxRetryError, spotipy.exceptions.SpotifyException) as e:
+        except (ConnectionError, urllib3.exceptions.ProtocolError, 
+                urllib3.exceptions.MaxRetryError, spotipy.exceptions.SpotifyException) as e:
             logging.error(f"Failed to start playback: {str(e)}")
             if attempt < retry_count - 1:
                 time.sleep(delay * (2 ** attempt))
@@ -159,12 +179,16 @@ def periodic_token_refresh():
 
 @app.on_event("shutdown")
 async def shutdown_event():
+    logging.info("Shutdown event triggered.")
     scheduler.shutdown(wait=False)
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    logging.info(f"Tasks to cancel: {len(tasks)}")
     for task in tasks:
         if not task.cancelled():
+            logging.info(f"Cancelling task: {task}")
             task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    logging.info("All tasks have been cancelled.")
 
 @app.on_event("startup")
 def startup_event():
