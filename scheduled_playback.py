@@ -12,7 +12,7 @@ import logging
 from requests.exceptions import ConnectionError
 import urllib3
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = FastAPI()
 scheduler = BackgroundScheduler()
@@ -77,7 +77,6 @@ def callback(request: Request):
         logging.error("Authorization failed: No code received.")
         raise HTTPException(status_code=400, detail="Authorization failed or denied.")
     
-    logging.info(f"Authorization code received: {code}")
     token_info = sp_oauth.get_access_token(code)
     save_token_info(token_info)
     logging.info("Token information saved.")
