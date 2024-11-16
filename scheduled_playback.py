@@ -56,36 +56,6 @@ def initialize_spotify_client():
     else:
         sp = None
 
-@app.get("/login")
-def login():
-    logging.info("Login endpoint accessed.")
-    token_info = load_token_info()
-    if token_info:
-        logging.info("Token information found. User is already authenticated.")
-        return {"message": "Already authenticated", "token_info": token_info}
-    
-    auth_url = sp_oauth.get_authorize_url()
-    logging.info(f"Auth URL generated: {auth_url}")
-    return {"auth_url": auth_url}
-
-@app.get("/callback")
-def callback(request: Request):
-    logging.info("Callback endpoint accessed.")
-    global sp
-    code = request.query_params.get('code')
-    if not code:
-        logging.error("Authorization failed: No code received.")
-        raise HTTPException(status_code=400, detail="Authorization failed or denied.")
-    
-    token_info = sp_oauth.get_access_token(code)
-    save_token_info(token_info)
-    logging.info("Token information saved.")
-    sp = spotipy.Spotify(auth=token_info['access_token'])
-    
-    user_info = sp.current_user()
-    logging.info(f"User authenticated: {user_info}")
-    return {"user_info": user_info}
-
 def refresh_token_if_needed(retry_count=5, delay=5):
     global sp
     token_info = load_token_info()
