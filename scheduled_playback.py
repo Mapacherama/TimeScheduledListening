@@ -33,8 +33,11 @@ def refresh_token_if_needed():
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
 
+    if not sp:
+        initialize_spotify_client() 
+
     refresh_token_if_needed()
-    if not sp or not isinstance(sp, spotipy.Spotify):
+    if not isinstance(sp, spotipy.Spotify):
         raise Exception("Spotify client is not initialized.")
 
     if not playlist_uri or not isinstance(playlist_uri, str):
