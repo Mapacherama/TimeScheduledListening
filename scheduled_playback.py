@@ -33,10 +33,22 @@ def refresh_token_if_needed():
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     """Play a Spotify playlist or URI."""
     global sp
+
+    # Ensure Spotify client is initialized
     refresh_token_if_needed()
-    if not sp:
+    if not sp or not isinstance(sp, spotipy.Spotify):
         raise Exception("Spotify client is not initialized.")
 
+    # Validate playlist URI
+    if not playlist_uri or not isinstance(playlist_uri, str):
+        raise ValueError("Invalid playlist URI provided.")
+
+    # Check active devices
+    devices = sp.devices()
+    if not devices['devices']:
+        raise Exception("No active Spotify devices available for playback.")
+
+    # Retry mechanism
     for attempt in range(retry_count):
         try:
             if playlist_uri.startswith(("spotify:playlist:", "spotify:album:", "spotify:artist:")):
@@ -45,12 +57,16 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
                 sp.start_playback(uris=[playlist_uri])
 
             logging.info(f"Started playback for {playlist_uri}")
-            break
+            return  # Success, exit function
         except (ConnectionError, urllib3.exceptions.ProtocolError, 
                 urllib3.exceptions.MaxRetryError, spotipy.exceptions.SpotifyException) as e:
-            logging.error(f"Failed to start playback: {str(e)}")
+            logging.error(f"Failed to start playback (Attempt {attempt + 1}/{retry_count}): {str(e)}")
             if attempt < retry_count - 1:
+                logging.warning(f"Retrying in {delay * (2 ** attempt)} seconds...")
                 time.sleep(delay * (2 ** attempt))
             else:
                 logging.error("Max retry attempts reached. Playback failed.")
                 raise
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+            raise
