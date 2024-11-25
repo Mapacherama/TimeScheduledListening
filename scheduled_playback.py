@@ -28,7 +28,14 @@ def refresh_token_if_needed():
     global sp
     if not sp:
         raise Exception("Spotify client is not initialized.")
-    sp.auth_manager.refresh_access_token()
+    
+    # Get the current access token
+    access_token_info = sp.auth_manager.get_access_token(as_dict=True)
+    
+    # Check if the access token is expired
+    if access_token_info['expires_at'] < time.time():
+        # Refresh the access token
+        sp.auth_manager.refresh_access_token(access_token_info['refresh_token'])
 
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
