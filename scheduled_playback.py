@@ -5,6 +5,7 @@ import logging
 from requests.exceptions import ConnectionError
 import urllib3
 import time
+import requests
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -50,9 +51,24 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
     if not playlist_uri or not isinstance(playlist_uri, str):
         raise ValueError("Invalid playlist URI provided.")
 
-    devices = sp.devices()
-    if not devices['devices']:
-        raise Exception("No active Spotify devices available for playback.")
+    devices = None
+    for attempt in range(retry_count):
+        try:
+            devices = sp.devices()
+            if devices['devices']:
+                break
+            else:
+                raise Exception("No active Spotify devices available for playback.")
+        except requests.exceptions.ConnectionError as e:
+            logging.error(f"Connection error: {e}. Attempt {attempt + 1} of {retry_count}.")
+            if attempt < retry_count - 1:
+                time.sleep(delay)
+            else:
+                logging.error("Max retries reached. Unable to fetch devices.")
+                raise
+        except Exception as e:
+            logging.error(f"Unexpected error while fetching devices: {e}")
+            raise
 
     for attempt in range(retry_count):
         try:
