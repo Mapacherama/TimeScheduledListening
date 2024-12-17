@@ -16,6 +16,10 @@ sp_oauth = SpotifyOAuth(
     scope="user-modify-playback-state user-read-playback-state user-read-currently-playing"
 )
 
+print(os.getenv("SPOTIPY_CLIENT_ID"))
+print(os.getenv("SPOTIPY_CLIENT_SECRET"))
+print(os.getenv("SPOTIPY_REDIRECT_URI"))
+
 sp = None 
 
 def initialize_spotify_client():
@@ -30,13 +34,15 @@ def refresh_token_if_needed():
     if not sp:
         raise Exception("Spotify client is not initialized.")
     
-    # Get the current access token
     access_token_info = sp.auth_manager.get_access_token(as_dict=True)
-    
-    # Check if the access token is expired
-    if access_token_info['expires_at'] < time.time():
-        # Refresh the access token
-        sp.auth_manager.refresh_access_token(access_token_info['refresh_token'])
+
+    # Check and refresh the token
+    if 'expires_at' in access_token_info and access_token_info['expires_at'] < time.time():
+        logging.info("Access token expired. Refreshing token...")
+        new_token_info = sp.auth_manager.refresh_access_token(access_token_info['refresh_token'])
+        logging.info("Access token refreshed successfully.")
+    else:
+        logging.info("Access token is still valid.")
 
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
