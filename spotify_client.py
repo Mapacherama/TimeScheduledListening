@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import time
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -31,3 +32,39 @@ def load_token_info():
             return None
     logging.warning("No token information found.")
     return None
+
+def initialize_spotify_client():
+    """Initialize the Spotify client with token persistence."""
+    global sp
+
+    # Load token from file
+    token_info = load_token_info()
+
+    # Check if token exists and is still valid
+    if token_info:
+        sp_oauth.token_info = token_info
+        logging.info("Using loaded token information.")
+    else:
+        logging.info("No valid token found. Requesting a new token.")
+    
+    # Initialize Spotify client
+    sp = spotipy.Spotify(auth_manager=sp_oauth)
+    save_token_info(sp.auth_manager.get_cached_token())
+    logging.info("Spotify client initialized successfully.")
+
+def refresh_token_if_needed():
+    """Refresh Spotify token if it's expired."""
+    global sp
+
+    if not sp:
+        raise Exception("Spotify client is not initialized.")
+
+    access_token_info = sp.auth_manager.get_access_token(as_dict=True)
+
+    # Refresh only if expired
+    if access_token_info['expires_at'] < time.time():
+        refreshed_token = sp.auth_manager.refresh_access_token(access_token_info['refresh_token'])
+        save_token_info(refreshed_token)  # Save the refreshed token
+        logging.info("Token refreshed and saved.")
+
+
