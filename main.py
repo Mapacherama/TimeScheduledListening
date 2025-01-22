@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, Query, HTTPException
+from contextlib import asynccontextmanager
 from uvicorn import run
 from auth import callback, login
 from scheduled_playback import (
@@ -9,15 +10,19 @@ from scheduler import schedule_playlist, start_scheduler, stop_scheduler
 from podcast import search_podcast
 import logging
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    start_scheduler()
+    yield
+    # Shutdown
+    stop_scheduler()
+
+app = FastAPI(lifespan=lifespan)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 sp = None 
-
-@app.on_event("startup")
-def startup_event():
-    start_scheduler()
 
 @app.get("/login")
 async def login_route():
@@ -36,7 +41,7 @@ async def callback_route(request: Request):
         raise HTTPException(status_code=500, detail="Callback failed")
 
 @app.get("/schedule-playlist")
-def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., regex="^([0-9]{2}):([0-9]{2})$")):
+def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., pattern="^([0-9]{2}):([0-9]{2})$")):
     try:
         return schedule_playlist(play_playlist, playlist_uri, play_time)
     except Exception as e:
@@ -52,9 +57,5 @@ def search_podcast_route(query: str):
         logging.error(f"Error searching podcast: {e}")
         raise HTTPException(status_code=500, detail="Podcast search failed")
 
-@app.on_event("shutdown")
-def shutdown_event():
-    stop_scheduler()
-
 if __name__ == "__main__":
-    run(app, host="0.0.0.0", port=8000, reload=True)
+    run("main:app", host="0.0.0.0", port=8000, reload=True)
