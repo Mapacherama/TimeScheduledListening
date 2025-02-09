@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Query, HTTPException
 from contextlib import asynccontextmanager
 from uvicorn import run
-from ai import get_ai_playlist_recommendation
+from ai import get_ai_playlist_recommendation, get_ai_podcast_recommendation
 from auth import callback, login
 from scheduled_playback import (
     refresh_token_if_needed,
@@ -59,9 +59,21 @@ def ai_playlist_route(mood: str):
     except Exception as e:
         logging.error(f"AI Playlist Request Failed: {e}")
         raise HTTPException(status_code=500, detail="AI Playlist Request Failed")    
+    
+@app.get("/ai-podcast")
+def ai_podcast_route(subject: str):
+    """
+    Fetches an AI-generated podcast recommendation based on subject.
+    """
+    try:
+        return get_ai_podcast_recommendation(subject)
+    except Exception as e:
+        logging.error(f"AI Podcast Request Failed: {e}")
+        raise HTTPException(status_code=500, detail="AI Podcast Request Failed")
 
 @app.get("/search-podcast")
 def search_podcast_route(query: str):
+
     global sp
     try:
         return search_podcast(sp, refresh_token_if_needed, query)
