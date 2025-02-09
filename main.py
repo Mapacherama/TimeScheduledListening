@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Query, HTTPException
 from contextlib import asynccontextmanager
 from uvicorn import run
+from ai import get_ai_playlist_recommendation
 from auth import callback, login
 from scheduled_playback import (
     refresh_token_if_needed,
@@ -47,6 +48,17 @@ def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., patte
     except Exception as e:
         logging.error(f"Error scheduling playlist: {e}")
         raise HTTPException(status_code=500, detail="Scheduling failed")
+    
+@app.get("/ai-playlist")
+def ai_playlist_route(mood: str):
+    """
+    Fetches an AI-generated playlist recommendation based on mood.
+    """
+    try:
+        return get_ai_playlist_recommendation(mood)
+    except Exception as e:
+        logging.error(f"AI Playlist Request Failed: {e}")
+        raise HTTPException(status_code=500, detail="AI Playlist Request Failed")    
 
 @app.get("/search-podcast")
 def search_podcast_route(query: str):
