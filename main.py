@@ -15,7 +15,7 @@ from scheduler import schedule_playlist, start_scheduler, stop_scheduler
 from podcast import search_podcast
 import logging
 
-from spotify_client import save_token_info
+from spotify_client import clear_token_info, save_token_info
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,9 +47,21 @@ async def login():
 
     return {"auth_url": auth_url}
 
+@app.get("/logout")
+def logout():
+    """
+    Clears stored Spotify authentication tokens and forces user to log in again.
+    """
+    clear_token_info()
+    logging.info("✅ User logged out successfully.")
+    return {"message": "Logged out successfully"}
+
 @app.get("/callback")
 async def callback(request: Request):
-    logging.info("🚀 Callback endpoint accessed.")
+    logging.info(f"🚀 Callback accessed. Full request URL: {request.url}")
+
+    query_params = request.query_params
+    logging.info(f"🔍 Query parameters received: {query_params}")
 
     code = request.query_params.get("code")
     if not code:
@@ -58,17 +70,12 @@ async def callback(request: Request):
 
     try:
         logging.info("🔄 Attempting to exchange authorization code for token...")
-
-        # Exchange authorization code for access token
         token_info = sp_oauth.get_access_token(code)
         logging.info(f"✅ Token received: {token_info}")
 
-        # Save the token
         save_token_info(token_info)
-
-        # Initialize Spotify client with the new token
         initialize_spotify_client()
-        logging.info("✅ Spotify authentication successful. Client initialized.")
+        logging.info("✅ Spotify authentication successful.")
 
         return {"message": "Authentication successful!", "token_info": token_info}
 
