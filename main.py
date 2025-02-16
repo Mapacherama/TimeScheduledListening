@@ -49,16 +49,24 @@ def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., patte
         logging.error(f"Error scheduling playlist: {e}")
         raise HTTPException(status_code=500, detail="Scheduling failed")
     
+from spotify_service import get_spotify_playlists
+
 @app.get("/ai-playlist")
 def ai_playlist_route(mood: str):
     """
     Fetches an AI-generated playlist recommendation based on mood.
+    Falls back to Spotify's curated playlists if AI fails.
     """
     try:
-        return get_ai_playlist_recommendation(mood)
+        ai_playlist = get_ai_playlist_recommendation(mood)
+        if not ai_playlist:
+            logging.warning(f"AI failed for mood '{mood}', falling back to Spotify.")
+            return get_spotify_playlists(mood)
+
+        return ai_playlist
     except Exception as e:
-        logging.error(f"AI Playlist Request Failed: {e}")
-        raise HTTPException(status_code=500, detail="AI Playlist Request Failed")    
+        logging.error(f"AI Playlist Request Failed: {e}, using Spotify instead.")
+        return get_spotify_playlists(mood)
     
 @app.get("/ai-podcast")
 def ai_podcast_route(subject: str):
