@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import time
+import spotipy
+from scheduled_playback import sp_oauth
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -33,6 +35,16 @@ def load_token_info():
     logging.warning("No token information found.")
     return None
 
+def clear_token_info():
+    """
+    Clears the stored Spotify authentication token file to force re-authentication.
+    """
+    if os.path.exists(TOKEN_FILE_PATH):
+        os.remove(TOKEN_FILE_PATH)
+        print("Spotify token file cleared.")
+    else:
+        print("No token file found.")
+        
 def initialize_spotify_client():
     """Initialize the Spotify client with token persistence."""
     global sp

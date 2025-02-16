@@ -29,21 +29,66 @@ def initialize_spotify_client():
     sp = spotipy.Spotify(auth_manager=sp_oauth)
     logging.info("Spotify client initialized successfully.")
 
-def refresh_token_if_needed():
-    """Refresh Spotify token if it's expired."""
-    global sp
-    if not sp:
-        raise Exception("Spotify client is not initialized.")
-    
-    access_token_info = sp.auth_manager.get_access_token(as_dict=True)
+import os
+import logging
+from spotify_client import load_token_info, save_token_info, clear_token_info
+import requests
+from scheduled_playback import sp_oauth
 
-    # Check and refresh the token
-    if 'expires_at' in access_token_info and access_token_info['expires_at'] < time.time():
-        logging.info("Access token expired. Refreshing token...")
-        new_token_info = sp.auth_manager.refresh_access_token(access_token_info['refresh_token'])
-        logging.info("Access token refreshed successfully.")
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+
+def refresh_token_if_needed():
+    """
+    Refreshes the Spotify access token if it's expired.
+    If the refresh token is invalid, forces user to log in again.
+    """
+    token_info = load_token_info()
+    
+    if not token_info:
+        logging.warning("No token info found. User must log in.")
+        return None
+
+    expires_at = token_info.get("expires_at", 0)
+    refresh_token = token_info.get("refresh_token")
+    
+    if not refresh_token:
+        logging.error("No refresh token available. User must re-authenticate.")
+        clear_token_info()  # Delete invalid token
+        return None  # Force login
+
+    # Check if token is expired
+    from datetime import datetime
+    if datetime.now().timestamp() < expires_at:
+        logging.info("Token is still valid.")
+        return token_info
+
+    logging.info("Access token expired. Refreshing...")
+
+    # Attempt to refresh the token
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": sp_oauth.client_id,
+        "client_secret": sp_oauth.client_secret,
+    }
+
+    response = requests.post(SPOTIFY_TOKEN_URL, data=payload)
+
+    if response.status_code == 200:
+        new_token_info = response.json()
+        new_token_info["expires_at"] = datetime.now().timestamp() + new_token_info["expires_in"]
+        save_token_info(new_token_info)
+        logging.info("Token refreshed successfully.")
+        return new_token_info
+
+    elif response.status_code == 400 and "invalid_grant" in response.text:
+        logging.error("Refresh token revoked. User must log in again.")
+        clear_token_info()  # Delete old token to force new login
+        return None
+
     else:
-        logging.info("Access token is still valid.")
+        logging.error(f"Token refresh failed: {response.text}")
+        return None
 
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
