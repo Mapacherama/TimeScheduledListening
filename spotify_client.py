@@ -11,11 +11,20 @@ token_store = {}
 TOKEN_FILE_PATH = "token_info.json"
 
 def save_token_info(token_info):
-    logging.info("Attempting to save token information.")
+    logging.info("📝 Attempting to save token information.")
+
+    # Check if token_info is empty or None
+    if not token_info:
+        logging.error("❌ save_token_info() received an empty token. Not saving!")
+        return
+
     token_store['token_info'] = token_info
-    with open(TOKEN_FILE_PATH, 'w') as f:
-        json.dump(token_info, f)
-    logging.info("Token information saved successfully.")
+    try:
+        with open(TOKEN_FILE_PATH, 'w') as f:
+            json.dump(token_info, f)
+        logging.info("✅ Token information saved successfully.")
+    except Exception as e:
+        logging.error(f"❌ Error writing token file: {e}")
 
 def load_token_info():
     logging.info("Attempting to load token information.")

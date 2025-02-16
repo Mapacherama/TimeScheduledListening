@@ -66,10 +66,12 @@ async def callback(request: Request):
     code = request.query_params.get("code")
     if not code:
         logging.error("❌ Authorization failed: No code received.")
-        raise HTTPException(status_code=400, detail="Authorization failed or denied.")
+        return {"error": "Authorization failed: No code received.", "full_url": str(request.url)}
 
     try:
         logging.info("🔄 Attempting to exchange authorization code for token...")
+
+        # Exchange authorization code for access token
         token_info = sp_oauth.get_access_token(code)
         logging.info(f"✅ Token received: {token_info}")
 
@@ -81,8 +83,15 @@ async def callback(request: Request):
 
     except Exception as e:
         logging.error(f"❌ Error during callback: {e}")
-        raise HTTPException(status_code=500, detail="Authentication failed")
 
+        # Try logging the full response from Spotify
+        try:
+            error_response = sp_oauth.get_access_token(code)
+            logging.error(f"🔴 Spotify API Error Response: {error_response}")
+        except Exception as inner_e:
+            logging.error(f"⚠️ Failed to log error response: {inner_e}")
+
+        return {"error": f"Authentication failed: {e}"}
 
 @app.get("/schedule-playlist")
 def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., pattern="^([0-9]{2}):([0-9]{2})$")):
