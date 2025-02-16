@@ -1,18 +1,21 @@
-from datetime import datetime
 from fastapi import FastAPI, Request, Query, HTTPException
 from contextlib import asynccontextmanager
 from uvicorn import run
 from ai import get_ai_playlist_recommendation, get_ai_podcast_recommendation
-from auth import callback, login
+from auth import callback
 from scheduled_playback import (
     get_spotify_playlists,
     get_time_based_mood,
+    initialize_spotify_client,
     refresh_token_if_needed,
-    play_playlist
+    play_playlist,
+    sp_oauth
 )
 from scheduler import schedule_playlist, start_scheduler, stop_scheduler
 from podcast import search_podcast
 import logging
+
+from spotify_client import save_token_info
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,20 +32,50 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 sp = None 
 
 @app.get("/login")
-async def login_route():
-    try:
-        return await login()
-    except Exception as e:
-        logging.error(f"Error during login: {e}")
-        raise HTTPException(status_code=500, detail="Login failed")
+async def login():
+    logging.info("Login endpoint accessed.")
+
+    # Check if a valid token already exists
+    token_info = refresh_token_if_needed()
+    if token_info:
+        logging.info("Token information found. User is already authenticated.")
+        return {"message": "Already authenticated", "token_info": token_info}
+
+    # If no valid token, request a new one
+    auth_url = sp_oauth.get_authorize_url()
+    logging.info(f"Auth URL generated: {auth_url}")
+
+    return {"auth_url": auth_url}
 
 @app.get("/callback")
-async def callback_route(request: Request):
+async def callback(request: Request):
+    logging.info("🚀 Callback endpoint accessed.")
+
+    code = request.query_params.get("code")
+    if not code:
+        logging.error("❌ Authorization failed: No code received.")
+        raise HTTPException(status_code=400, detail="Authorization failed or denied.")
+
     try:
-        return await callback(request)
+        logging.info("🔄 Attempting to exchange authorization code for token...")
+
+        # Exchange authorization code for access token
+        token_info = sp_oauth.get_access_token(code)
+        logging.info(f"✅ Token received: {token_info}")
+
+        # Save the token
+        save_token_info(token_info)
+
+        # Initialize Spotify client with the new token
+        initialize_spotify_client()
+        logging.info("✅ Spotify authentication successful. Client initialized.")
+
+        return {"message": "Authentication successful!", "token_info": token_info}
+
     except Exception as e:
-        logging.error(f"Error during callback: {e}")
-        raise HTTPException(status_code=500, detail="Callback failed")
+        logging.error(f"❌ Error during callback: {e}")
+        raise HTTPException(status_code=500, detail="Authentication failed")
+
 
 @app.get("/schedule-playlist")
 def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., pattern="^([0-9]{2}):([0-9]{2})$")):
