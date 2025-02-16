@@ -2,12 +2,12 @@ from datetime import datetime
 from fastapi import Request, HTTPException
 from scheduled_playback import refresh_token_if_needed, sp_oauth
 import logging
-from spotify_client import load_token_info, save_token_info
+from spotify_client import save_token_info
 import spotipy
 
 async def login():
     logging.info("Login endpoint accessed.")
-    token_info = load_token_info()
+    token_info =  refresh_token_if_needed()
     if token_info:
         logging.info("Token information found. User is already authenticated.")
         return {"message": "Already authenticated", "token_info": token_info}

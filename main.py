@@ -48,8 +48,6 @@ def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., patte
     except Exception as e:
         logging.error(f"Error scheduling playlist: {e}")
         raise HTTPException(status_code=500, detail="Scheduling failed")
-    
-from spotify_service import get_spotify_playlists
 
 @app.get("/ai-playlist")
 def ai_playlist_route(mood: str):
