@@ -37,13 +37,17 @@ def load_token_info():
 
 def clear_token_info():
     """
-    Clears the stored Spotify authentication token file to force re-authentication.
+    Clears the stored Spotify authentication token file and resets memory.
     """
+    global token_store
+
     if os.path.exists(TOKEN_FILE_PATH):
         os.remove(TOKEN_FILE_PATH)
-        print("Spotify token file cleared.")
-    else:
-        print("No token file found.")
+        logging.info("Spotify token file cleared.")
+
+    token_store.clear()
+    logging.info("In-memory token store cleared.")
+
         
 def initialize_spotify_client():
     """Initialize the Spotify client with token persistence."""
@@ -65,18 +69,41 @@ def initialize_spotify_client():
     logging.info("Spotify client initialized successfully.")
 
 def refresh_token_if_needed():
-    """Refresh Spotify token if it's expired."""
+    """Refresh Spotify token if it's expired or missing."""
     global sp
 
-    if not sp:
-        raise Exception("Spotify client is not initialized.")
+    token_info = load_token_info()  # Load from JSON file
+    if not token_info:
+        logging.warning("No token info found. User must log in.")
+        return None  # Force login
 
-    access_token_info = sp.auth_manager.get_access_token(as_dict=True)
+    expires_at = token_info.get("expires_at", 0)
+    refresh_token = token_info.get("refresh_token")
 
-    # Refresh only if expired
-    if access_token_info['expires_at'] < time.time():
-        refreshed_token = sp.auth_manager.refresh_access_token(access_token_info['refresh_token'])
-        save_token_info(refreshed_token)  # Save the refreshed token
-        logging.info("Token refreshed and saved.")
+    if not refresh_token:
+        logging.error("No refresh token available. User must re-authenticate.")
+        clear_token_info()  # Delete invalid token
+        return None  # Force login
+
+    # Check if token is expired
+    if expires_at > time.time():
+        logging.info("Token is still valid.")
+        return token_info  # No need to refresh
+
+    logging.info("Access token expired. Attempting refresh...")
+
+    # Refresh the token
+    try:
+        refreshed_token = sp_oauth.refresh_access_token(refresh_token)
+        refreshed_token["expires_at"] = time.time() + refreshed_token["expires_in"]
+
+        save_token_info(refreshed_token)  # Save updated token
+        logging.info("Token refreshed and saved successfully.")
+        return refreshed_token
+
+    except Exception as e:
+        logging.error(f"Token refresh failed: {e}")
+        clear_token_info()  # Reset token storage
+        return None  # Force login
 
 
