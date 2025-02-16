@@ -44,6 +44,4 @@ def get_ai_podcast_recommendation(subject: str):
 
     except Exception as e:
         logging.error(f"AI Playlist Generation Failed: {e}")
-        return {"error": "Failed to generate playlist recommendation"}
-    
-    
+        return {"error": "Failed to generate playlist recommendation"}    

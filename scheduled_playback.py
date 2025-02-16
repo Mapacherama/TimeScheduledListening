@@ -1,3 +1,4 @@
+from datetime import datetime
 from spotipy.oauth2 import SpotifyOAuth
 import spotipy
 import os
@@ -97,3 +98,51 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
         except Exception as e:
             logging.error(f"Unexpected error: {e}")
             raise
+
+def get_spotify_playlists(mood: str, limit: int = 5):
+    """
+    Fetches Spotify playlists based on the provided mood.
+
+    Args:
+        - mood (str): The mood/category (e.g., 'focus', 'workout', 'chill').
+        - limit (int): Number of playlists to fetch.
+
+    Returns:
+        - List of playlist dictionaries with 'name', 'uri', and 'url'.
+    """
+    token_info = refresh_token_if_needed()  # Ensure we have a fresh token
+    if not token_info:
+        raise Exception("Spotify authentication required. Please log in.")
+
+    token = token_info["access_token"]
+
+    url = f"https://api.spotify.com/v1/browse/categories/{mood.lower()}/playlists"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = requests.get(url, headers=headers, params={"limit": limit})
+
+    if response.status_code == 200:
+        playlists = response.json().get("playlists", {}).get("items", [])
+        if not playlists:
+            logging.warning(f"No playlists found for mood: {mood}. Trying fallback categories.")
+            return get_spotify_playlists("chill")  # Fallback to a general mood
+
+        return [{"name": p["name"], "uri": p["uri"], "url": p["external_urls"]["spotify"]} for p in playlists]
+
+    logging.error(f"Failed to fetch Spotify playlists: {response.text}")
+    raise Exception(f"Spotify API error: {response.status_code} - {response.text}")
+
+def get_time_based_mood():
+    """
+    Returns a recommended mood based on the current time of day.
+    """
+    hour = datetime.now().hour
+
+    if 6 <= hour < 12:
+        return "energy boost"  # Morning vibes ☀️
+    elif 12 <= hour < 18:
+        return "focus"  # Work & study time 🎯
+    elif 18 <= hour < 22:
+        return "chill"  # Wind-down & relax 🌆
+    else:
+        return "sleep"  # Night-time calming music 😴 

@@ -1,9 +1,12 @@
+from datetime import datetime
 from fastapi import FastAPI, Request, Query, HTTPException
 from contextlib import asynccontextmanager
 from uvicorn import run
 from ai import get_ai_playlist_recommendation, get_ai_podcast_recommendation
 from auth import callback, login
 from scheduled_playback import (
+    get_spotify_playlists,
+    get_time_based_mood,
     refresh_token_if_needed,
     play_playlist
 )
@@ -85,7 +88,30 @@ def search_podcast_route(query: str):
         return search_podcast(sp, refresh_token_if_needed, query)
     except Exception as e:
         logging.error(f"Error searching podcast: {e}")
-        raise HTTPException(status_code=500, detail="Podcast search failed")
+        raise HTTPException(status_code=500, detail="Podcast search failed")   
+    
+@app.get("/mood-playlist")
+def mood_playlist_route():
+    """
+    Automatically selects a playlist based on the time of day.
+    Falls back to Spotify if AI fails.
+    """
+    mood = get_time_based_mood()
+    logging.info(f"Selected mood: {mood}")
+
+    try:
+        # Try AI-based recommendation first
+        ai_playlist = get_ai_playlist_recommendation(mood)
+        if ai_playlist:
+            return ai_playlist
+
+        # If AI fails, fallback to Spotify's curated playlists
+        logging.warning(f"AI failed for mood '{mood}', falling back to Spotify.")
+        return get_spotify_playlists(mood)
+
+    except Exception as e:
+        logging.error(f"Error fetching mood-based playlist: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch mood-based playlist")
 
 if __name__ == "__main__":
     run("main:app", host="0.0.0.0", port=8000, reload=True)
