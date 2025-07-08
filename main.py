@@ -1,13 +1,13 @@
+from datetime import datetime
 from fastapi import FastAPI, Request, Query, HTTPException
 from contextlib import asynccontextmanager
 from uvicorn import run
 from ai import get_ai_playlist_recommendation, get_ai_podcast_recommendation
-from auth import callback
+from auth import callback as auth_callback
 from scheduled_playback import (
     get_spotify_playlists,
     get_time_based_mood,
     initialize_spotify_client,
-    refresh_token_if_needed,
     play_playlist,
     sp_oauth
 )
@@ -15,7 +15,8 @@ from scheduler import schedule_playlist, start_scheduler, stop_scheduler
 from podcast import search_podcast
 import logging
 
-from spotify_client import clear_token_info, save_token_info
+# Import from spotify_client instead of scheduled_playback
+from spotify_client import clear_token_info, save_token_info, refresh_token_if_needed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,7 +36,7 @@ sp = None
 async def login():
     logging.info("Login endpoint accessed.")
 
-    # Check if a valid token already exists
+    # Use the same refresh_token_if_needed function
     token_info = refresh_token_if_needed()
     if token_info:
         logging.info("Token information found. User is already authenticated.")
@@ -58,40 +59,16 @@ def logout():
 
 @app.get("/callback")
 async def callback(request: Request):
-    logging.info(f"🚀 Callback accessed. Full request URL: {request.url}")
-
-    query_params = request.query_params
-    logging.info(f"🔍 Query parameters received: {query_params}")
-
     code = request.query_params.get("code")
     if not code:
-        logging.error("❌ Authorization failed: No code received.")
-        return {"error": "Authorization failed: No code received.", "full_url": str(request.url)}
+        raise HTTPException(status_code=400, detail="Authorization code not provided")
 
-    try:
-        logging.info("🔄 Attempting to exchange authorization code for token...")
+    token_info = sp_oauth.get_access_token(code)
+    token_info["expires_at"] = datetime.now().timestamp() + token_info["expires_in"]
 
-        # Exchange authorization code for access token
-        token_info = sp_oauth.get_access_token(code)
-        logging.info(f"✅ Token received: {token_info}")
+    save_token_info(token_info) 
 
-        save_token_info(token_info)
-        initialize_spotify_client()
-        logging.info("✅ Spotify authentication successful.")
-
-        return {"message": "Authentication successful!", "token_info": token_info}
-
-    except Exception as e:
-        logging.error(f"❌ Error during callback: {e}")
-
-        # Try logging the full response from Spotify
-        try:
-            error_response = sp_oauth.get_access_token(code)
-            logging.error(f"🔴 Spotify API Error Response: {error_response}")
-        except Exception as inner_e:
-            logging.error(f"⚠️ Failed to log error response: {inner_e}")
-
-        return {"error": f"Authentication failed: {e}"}
+    return await auth_callback(request)
 
 @app.get("/schedule-playlist")
 def schedule_playlist_route(playlist_uri: str, play_time: str = Query(..., pattern="^([0-9]{2}):([0-9]{2})$")):
@@ -180,6 +157,7 @@ def auth_status():
     """
     Check the current authentication status and return appropriate action.
     """
+    # Use the refresh_token_if_needed from spotify_client
     token_info = refresh_token_if_needed()
     if token_info:
         return {
@@ -194,6 +172,37 @@ def auth_status():
             "message": "User needs to authenticate",
             "auth_url": auth_url
         }
+
+@app.get("/debug-token")
+def debug_token():
+    """
+    Debug endpoint to check token file and status.
+    """
+    import os
+    from spotify_client import load_token_info
+    
+    token_file_exists = os.path.exists("token_info.json")
+    token_info = load_token_info()
+    
+    if token_file_exists:
+        file_size = os.path.getsize("token_info.json")
+        try:
+            with open("token_info.json", 'r') as f:
+                file_content = f.read()
+        except Exception as e:
+            file_content = f"Error reading file: {e}"
+    else:
+        file_size = 0
+        file_content = "File does not exist"
+    
+    return {
+        "token_file_exists": token_file_exists,
+        "file_size": file_size,
+        "token_info_loaded": token_info is not None,
+        "token_info_keys": list(token_info.keys()) if token_info else None,
+        "file_content_preview": file_content[:200] + "..." if len(file_content) > 200 else file_content,
+        "current_time": time.time()
+    }
 
 if __name__ == "__main__":
     run("main:app", host="0.0.0.0", port=8000, reload=True)

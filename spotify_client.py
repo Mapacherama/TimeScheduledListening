@@ -11,26 +11,58 @@ token_store = {}
 TOKEN_FILE_PATH = "token_info.json"
 
 def save_token_info(token_info):
-    logging.info("📝 Attempting to save token information.")
+    """
+    Save token information to both memory and JSON file.
+    Returns True if successful, False otherwise.
+    """
+    logging.info("�� Attempting to save token information.")
 
     # Check if token_info is empty or None
     if not token_info:
         logging.error("❌ save_token_info() received an empty token. Not saving!")
-        return
+        return False
 
-    token_store['token_info'] = token_info
+    # Validate required fields
+    required_fields = ["access_token", "refresh_token", "expires_in", "expires_at"]
+    missing_fields = [field for field in required_fields if field not in token_info]
+    if missing_fields:
+        logging.error(f"❌ Token missing required fields: {missing_fields}")
+        return False
+
+    # Save to memory
+    token_store['token_info'] = token_info.copy()
+    
+    # Save to file
     try:
         with open(TOKEN_FILE_PATH, 'w') as f:
-            json.dump(token_info, f)
-        logging.info("✅ Token information saved successfully.")
+            json.dump(token_info, f, indent=2)
+        
+        # Verify file was written
+        if os.path.exists(TOKEN_FILE_PATH):
+            file_size = os.path.getsize(TOKEN_FILE_PATH)
+            logging.info(f"✅ Token information saved successfully. File size: {file_size} bytes")
+            return True
+        else:
+            logging.error("❌ File was not created")
+            return False
+            
     except Exception as e:
         logging.error(f"❌ Error writing token file: {e}")
+        return False
 
 def load_token_info():
+    """
+    Load token information from memory or JSON file.
+    Returns token_info dict or None if not found/invalid.
+    """
     logging.info("Attempting to load token information.")
+    
+    # Check memory first
     if 'token_info' in token_store:
         logging.info("Token information found in memory.")
         return token_store['token_info']
+    
+    # Check file
     if os.path.exists(TOKEN_FILE_PATH):
         try:
             with open(TOKEN_FILE_PATH, 'r') as f:
@@ -38,9 +70,13 @@ def load_token_info():
                 token_store['token_info'] = token_info
                 logging.info("Token information loaded from file.")
                 return token_info
-        except json.JSONDecodeError:
-            logging.error("Invalid token file format. Re-authentication is required.")
+        except json.JSONDecodeError as e:
+            logging.error(f"Invalid token file format: {e}. Re-authentication is required.")
             return None
+        except Exception as e:
+            logging.error(f"Error reading token file: {e}")
+            return None
+    
     logging.warning("No token information found.")
     return None
 
@@ -51,11 +87,46 @@ def clear_token_info():
     global token_store
 
     if os.path.exists(TOKEN_FILE_PATH):
-        os.remove(TOKEN_FILE_PATH)
-        logging.info("Spotify token file cleared.")
+        try:
+            os.remove(TOKEN_FILE_PATH)
+            logging.info("Spotify token file cleared.")
+        except Exception as e:
+            logging.error(f"Error removing token file: {e}")
 
     token_store.clear()
     logging.info("In-memory token store cleared.")
+
+def verify_token_file():
+    """
+    Verify that the token file exists and contains valid data.
+    Returns True if valid, False otherwise.
+    """
+    if not os.path.exists(TOKEN_FILE_PATH):
+        logging.warning("Token file does not exist")
+        return False
+    
+    try:
+        with open(TOKEN_FILE_PATH, 'r') as f:
+            token_info = json.load(f)
+        
+        required_fields = ["access_token", "refresh_token", "expires_at"]
+        missing_fields = [field for field in required_fields if field not in token_info]
+        
+        if missing_fields:
+            logging.error(f"Token file missing required fields: {missing_fields}")
+            return False
+        
+        # Check if token is expired
+        if time.time() > token_info["expires_at"]:
+            logging.warning("Token in file is expired")
+            return False
+        
+        logging.info("Token file is valid")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error verifying token file: {e}")
+        return False
 
         
 def initialize_spotify_client():
