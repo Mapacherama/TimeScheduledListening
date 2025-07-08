@@ -53,42 +53,41 @@ def refresh_token_if_needed():
     
     if not refresh_token:
         logging.error("No refresh token available. User must re-authenticate.")
-        clear_token_info()  # Delete invalid token
-        return None  # Force login
+        clear_token_info()
+        return None
 
-    # Check if token is expired
-    from datetime import datetime
-    if datetime.now().timestamp() < expires_at:
+    # Check if token is expired (with 60 second buffer)
+    if time.time() < (expires_at - 60):
         logging.info("Token is still valid.")
         return token_info
 
     logging.info("Access token expired. Refreshing...")
 
-    # Attempt to refresh the token
-    payload = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "client_id": sp_oauth.client_id,
-        "client_secret": sp_oauth.client_secret,
-    }
-
-    response = requests.post(SPOTIFY_TOKEN_URL, data=payload)
-
-    if response.status_code == 200:
-        new_token_info = response.json()
-        new_token_info["expires_at"] = datetime.now().timestamp() + new_token_info["expires_in"]
+    try:
+        # Use the OAuth manager's built-in refresh method
+        new_token_info = sp_oauth.refresh_access_token(refresh_token)
+        new_token_info["expires_at"] = time.time() + new_token_info["expires_in"]
+        
+        # Preserve the original refresh token if not provided in response
+        if "refresh_token" not in new_token_info:
+            new_token_info["refresh_token"] = refresh_token
+            
         save_token_info(new_token_info)
         logging.info("Token refreshed successfully.")
         return new_token_info
 
-    elif response.status_code == 400 and "invalid_grant" in response.text:
-        logging.error("Refresh token revoked. User must log in again.")
-        clear_token_info()  # Delete old token to force new login
-        return None
-
-    else:
-        logging.error(f"Token refresh failed: {response.text}")
-        return None
+    except Exception as e:
+        logging.error(f"Token refresh failed: {e}")
+        
+        # Check if it's a revoked token error
+        if "invalid_grant" in str(e) or "revoked" in str(e):
+            logging.error("Refresh token revoked. Clearing stored tokens.")
+            clear_token_info()
+            return None
+        
+        # For other errors, return the old token and let the caller handle it
+        logging.warning("Using existing token despite refresh failure.")
+        return token_info
 
 def play_playlist(playlist_uri, retry_count=3, delay=5):
     global sp
@@ -96,9 +95,18 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
     if not sp:
         initialize_spotify_client() 
 
-    refresh_token_if_needed()
-    if not isinstance(sp, spotipy.Spotify):
-        raise Exception("Spotify client is not initialized.")
+    # Check token before proceeding
+    token_info = refresh_token_if_needed()
+    if not token_info:
+        logging.error("No valid token available. User must re-authenticate.")
+        raise Exception("Authentication required. Please visit /login to authenticate.")
+    
+    # Reinitialize client with fresh token
+    try:
+        sp = spotipy.Spotify(auth=token_info["access_token"])
+    except Exception as e:
+        logging.error(f"Failed to initialize Spotify client: {e}")
+        raise Exception("Failed to initialize Spotify client. Please re-authenticate.")
 
     if not playlist_uri or not isinstance(playlist_uri, str):
         raise ValueError("Invalid playlist URI provided.")
@@ -111,6 +119,17 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
                 break
             else:
                 raise Exception("No active Spotify devices available for playback.")
+        except spotipy.exceptions.SpotifyException as e:
+            if "invalid_grant" in str(e) or "revoked" in str(e):
+                logging.error("Token revoked during device fetch. User must re-authenticate.")
+                clear_token_info()
+                raise Exception("Authentication expired. Please visit /login to re-authenticate.")
+            else:
+                logging.error(f"Spotify API error while fetching devices: {e}")
+                if attempt < retry_count - 1:
+                    time.sleep(delay)
+                else:
+                    raise
         except requests.exceptions.ConnectionError as e:
             logging.error(f"Connection error: {e}. Attempt {attempt + 1} of {retry_count}.")
             if attempt < retry_count - 1:
@@ -131,14 +150,25 @@ def play_playlist(playlist_uri, retry_count=3, delay=5):
 
             logging.info(f"Started playback for {playlist_uri}")
             return
+        except spotipy.exceptions.SpotifyException as e:
+            if "invalid_grant" in str(e) or "revoked" in str(e):
+                logging.error("Token revoked during playback. User must re-authenticate.")
+                clear_token_info()
+                raise Exception("Authentication expired. Please visit /login to re-authenticate.")
+            else:
+                logging.error(f"Spotify API error during playback: {e}")
+                if attempt < retry_count - 1:
+                    time.sleep(delay * (2 ** attempt))
+                else:
+                    raise
         except (ConnectionError, urllib3.exceptions.ProtocolError, 
-                urllib3.exceptions.MaxRetryError, spotipy.exceptions.SpotifyException) as e:
+                urllib3.exceptions.MaxRetryError) as e:
             logging.error(f"Failed to start playback (Attempt {attempt + 1}/{retry_count}): {str(e)}")
             if attempt < retry_count - 1:
                 logging.warning(f"Retrying in {delay * (2 ** attempt)} seconds...")
                 time.sleep(delay * (2 ** attempt))
             else:
-                logging.error("Max retry attempts reached. Playback failed.")
+                logging.error("Max retries reached. Playback failed.")
                 raise
         except Exception as e:
             logging.error(f"Unexpected error: {e}")

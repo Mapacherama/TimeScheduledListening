@@ -162,5 +162,38 @@ def mood_playlist_route():
         logging.error(f"Error fetching mood-based playlist: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch mood-based playlist")
 
+@app.get("/force-login")
+def force_login():
+    """
+    Forces a new login by clearing all stored tokens.
+    Use this when you get 'Refresh token revoked' errors.
+    """
+    clear_token_info()
+    logging.info("✅ All tokens cleared. User must re-authenticate.")
+    
+    # Generate new auth URL
+    auth_url = sp_oauth.get_authorize_url()
+    return {"message": "Please re-authenticate", "auth_url": auth_url}
+
+@app.get("/auth-status")
+def auth_status():
+    """
+    Check the current authentication status and return appropriate action.
+    """
+    token_info = refresh_token_if_needed()
+    if token_info:
+        return {
+            "status": "authenticated",
+            "message": "User is authenticated",
+            "expires_at": token_info.get("expires_at")
+        }
+    else:
+        auth_url = sp_oauth.get_authorize_url()
+        return {
+            "status": "unauthenticated", 
+            "message": "User needs to authenticate",
+            "auth_url": auth_url
+        }
+
 if __name__ == "__main__":
     run("main:app", host="0.0.0.0", port=8000, reload=True)
